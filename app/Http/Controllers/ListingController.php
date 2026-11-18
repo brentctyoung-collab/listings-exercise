@@ -2,13 +2,16 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\AlertFrequency;
 use App\Enums\ListingStatus;
 use App\Enums\PropertyType;
 use App\Http\Requests\ListingIndexRequest;
 use App\Http\Resources\BranchResource;
+use App\Http\Resources\ListingCriteriaResource;
 use App\Http\Resources\ListingResource;
 use App\Models\Branch;
 use App\Models\Listing;
+use App\Support\ListingCriteria;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -19,26 +22,9 @@ class ListingController extends Controller
      */
     public function index(ListingIndexRequest $request): Response
     {
-        $query = Listing::query()->live();
-
-        if ($request->filled('property_type')) {
-            $query->where('property_type', $request->string('property_type'));
-        }
-
-        if ($request->filled('max_price')) {
-            $query->where('price', '<=', $request->integer('max_price'));
-        }
-
-        if ($request->filled('min_bedrooms')) {
-            $query->where('bedrooms', '>=', $request->integer('min_bedrooms'));
-        }
-
-        if ($request->filled('region')) {
-            $region = $request->string('region');
-            $query->whereHas('branch', function ($branchQuery) use ($region) {
-                $branchQuery->where('region', $region);
-            });
-        }
+        // The filter rules live in ListingCriteria, shared with saved searches.
+        $criteria = $request->criteria();
+        $query = $criteria->applyTo(Listing::query()->live());
 
         // `id` is a tiebreaker: without it, listings sharing a `listed_at` can be
         // ordered differently between page requests, which duplicates or skips
@@ -52,7 +38,14 @@ class ListingController extends Controller
             'listings' => ListingResource::collection($listings),
             'branches' => BranchResource::collection(Branch::query()->orderBy('name')->get()),
             'propertyTypes' => PropertyType::options(),
-            'filters' => $request->only('property_type', 'max_price', 'min_bedrooms', 'region'),
+            'filters' => $request->only(ListingCriteria::KEYS),
+            // The submitted search (this URL), not the filter form: it drives
+            // the "Save search" / "✓ Saved" button and the save modal.
+            'criteria' => new ListingCriteriaResource($criteria),
+            'savedSearchId' => $criteria->isEmpty()
+                ? null
+                : $request->user()?->savedSearches()->withCriteria($criteria)->value('id'),
+            'alertFrequencies' => AlertFrequency::options(),
         ]);
     }
 
